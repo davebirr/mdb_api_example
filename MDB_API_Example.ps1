@@ -127,67 +127,58 @@ Class partner{
     }
 }
 
-
+#Install PartnerCenter Module. This only needs to be done once (with elevated permissions)
 Install-Module PartnerCenter
 
+#Connect interactively to Partner Center using MFA
 $pcConnection = Connect-PartnerCenter
 
+#Create a partner object with my partner details. This will also hold customer tenant objects
 $myPartnerTenant = [partner]::new($pcConnection.Account.Tenant, $appId, $secret)
 
+#Copy consent link to the clipboard to email to customers or provide direct admin consent in customer tenants
+Set-Clipboard $myPartnerTenant.consentlink()
+
+#Get a list of all customers from Partner Center
 $myCustomers = Get-PartnerCustomer
 
-
+#Add all of the customers to my partner tenant object
 foreach ($customer in $myCustomers) {
 $myPartnerTenant.addCustomer($customer.CustomerId, $customer.Domain, $customer.Name)
 }
 
-#Example walk through for a single tenant. You can replace this with a foreach loop to do this for all tenants
+#Example walk through for a single customer tenant.  In this example we're picking the 5th tenant in the ArrayList
 $id = 4
 
+#Get an authorization token for this customer tenant and store it
 $myPartnerTenant.customerTenants[$id].getToken()
 
+#Retrieve the machines and vulnerabilities for the customer tenant using the API
 $myPartnerTenant.customerTenants[$id].getMachines()
 $myPartnerTenant.customerTenants[$id].getVulnerabilities()
 
+#Get the machines in the tenant so we can correlate data in vulnerabilities with more meaningful info such as computer dns name
 $machines = $myPartnerTenant.customerTenants[$id].machines | group -AsHashTable -Property id
 
-$myPartnerTenant.customerTenants[$id].vulnerabilities | 
-Group-Object severity | Select-Object Name,Count
+#Here a look at some raw vulnerability data. It's much more helpful if we correlate machineID to computer names and format this for readability
+$myPartnerTenant.customerTenants[$id].vulnerabilities | select -first 3
 
-$myPartnerTenant.customerTenants[$id].vulnerabilities | 
-Group-Object machineId | Select-Object @{name='ComputerName';expr={$machines[$_.Name].computerdnsname}},Count
-
-$myPartnerTenant.customerTenants[$id].vulnerabilities | 
-Group-Object machineId,severity | 
-Select-Object @{n="ComputerName";e={$machines[$_.Values[0]].computerdnsname}},@{n="Severity";e={$_.Values[1]}},Count
-
-$myPartnerTenant.customerTenants[$id].vulnerabilities | 
-Sort-Object Severity,cveId | 
-Select-Object Severity, cveId, @{n="ComputerName";e={$machines[$_.machineId].computerdnsname}}
-
+#Fomat the raw data into something useful
 #CSS codes
 $header = @"
 <style>
-
     h1 {
-
         font-family: Arial, Helvetica, sans-serif;
         color: #e68a00;
         font-size: 28px;
-
     }
-
-    
+ 
     h2 {
-
         font-family: Arial, Helvetica, sans-serif;
         color: #000099;
         font-size: 16px;
-
     }
 
-    
-    
    table {
 		font-size: 12px;
 		border: 0px; 
@@ -209,37 +200,23 @@ $header = @"
         padding: 10px 15px;
         vertical-align: middle;
 	}
-
     tbody tr:nth-child(even) {
         background: #f0f0f2;
     }
-    
-
-
     #CreationDate {
 
         font-family: Arial, Helvetica, sans-serif;
         color: #ff3300;
         font-size: 12px;
-
     }
-
-
-
     .StopStatus {
 
         color: #ff0000;
     }
-    
-  
     .RunningStatus {
 
         color: #008000;
     }
-
-
-
-
 </style>
 "@
 
@@ -252,8 +229,6 @@ $VulnerabilitySummary = $myPartnerTenant.customerTenants[$id].vulnerabilities | 
 #The command below will get the Vulnerability Summary by machiens & severity, convert the result to HTML code as table and store it to a variable
 #$MachineSummary = $myPartnerTenant.customerTenants[$id].vulnerabilities | Group-Object machineId,severity | Select-Object @{n="ComputerName";e={$machines[$_.Values[0]].computerdnsname}},@{n="Severity";e={$_.Values[1]}},Count | ConvertTo-Html -As List -Property ComputerName,Severity,Count -Fragment -PreContent "<h2>Vulnerability Count by Machine & Severity</h2>"
 $MachineSummary = $myPartnerTenant.customerTenants[$id].vulnerabilities | Sort-Object Severity | Group-Object machineId,severity | Select-Object @{n="ComputerName";e={$machines[$_.Values[0]].computerdnsname}},@{n="Severity";e={$_.Values[1]}},Count | ConvertTo-Html -Property ComputerName,Severity,Count -Fragment -PreContent "<h2>Vulnerability Count by Machine & Severity</h2>"
-
-
 
 #The command below will get vulnerability detail, convert the result to HTML code as table and store it to a variable
 $CriticalVulnerabilities = $myPartnerTenant.customerTenants[$id].vulnerabilities | ? {$_.Severity -eq "Critical"} | Sort-Object cveId | Select-Object Severity, cveId, @{n="ComputerName";e={$machines[$_.machineId].computerdnsname}}  |ConvertTo-Html -Property Severity,cveId,ComputerName -Fragment -PreContent "<h2>Critical Severity Vulnerability Detail Information</h2>"
@@ -271,5 +246,7 @@ $LowVulnerabilities = $myPartnerTenant.customerTenants[$id].vulnerabilities | ? 
 $Report = ConvertTo-HTML -Body "$CustomerName $VulnerabilitySummary $MachineSummary $CriticalVulnerabilities $HighVulnerabilities $MediumVulnerabilities $LowVulnerabilities" -Head $header -Title "Computer Vulnerability Report" -PostContent "<p id='CreationDate'>Creation Date: $(Get-Date)</p>"
 
 #The command below will generate the report to an HTML file
+
 $Report | Out-File .\MDB-API-Vulnerability-Report.html
+Start-Process "file:///C:/Users/davidb/demos/MDB-API-Vulnerability-Report.html"
 
